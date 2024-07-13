@@ -13,7 +13,6 @@ jobs:
       - uses: xu-cheng/latex-action@v3
         with:
           root_file: UIML_internship_raport.tex
-          latexmk_use_xelatex: true
 
       # From here it is copied from : https://github.com/jonhue/pubtex-action
       # with a few modifications
