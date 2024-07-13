@@ -1,0 +1,385 @@
+\documentclass{article}
+
+\usepackage[english]{babel}
+
+\usepackage{listings}
+\usepackage{xcolor}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+
+\usepackage{natbib}
+
+\usepackage{amstext} 
+\usepackage{array}  
+
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+
+\usepackage{float} 
+
+\usepackage{inconsolata}
+
+\usepackage{UIML_internship_repport}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+
+
+\newcolumntype{C}{>{$}c<{$}} % see https://tex.stackexchange.com/questions/112576/math-mode-in-tabular-without-having-to-use-everywhere
+\newcolumntype{L}{>{$}l<{$}} % see https://tex.stackexchange.com/questions/112576/math-mode-in-tabular-without-having-to-use-everywhere
+
+\title{Optimization of uniform interpolant formulas}
+\author{Yago Iglesias Vázquez}
+\date{June-July 2024}
+
+\begin{document}
+\maketitle
+
+\section{Objective}
+
+H. Férée and S. van Gool carried out a verified implementation of Pitts' \citep{pitts:interpolation} construction of propositional quantifiers in intuitionistic propositional
+logic (IPC) \citep{feree_van-gool:computing_prop} and extended to iSL, K and GL \citep{feree_van-gool:ijcar}. This work led to the release of a Uniform Interpolation
+Calculator \citep{github:uiml}. The objective of my internship was to simplify the formulas computed by the calculator using Coq, ensuring that the simplifications remain uniform interpolants.
+
+\section{Introduction}
+
+Pitts' theorem states that for every propositional formula $\phi (\bar{q}, p)$, we can compute $p$-free formulas
+\[
+	E_p (\phi) \text{ and } A_p (\phi)
+\]
+
+such that for every \(p\)-free formula \(\psi\),
+\[
+	\text{if } \phi \prelt \psi \text{ then } \phi \prelt E_p (\phi) \prelt \psi
+\]
+and
+\[
+	\text{if } \psi \prelt \phi \text{ then } \psi \prelt A_p (\phi) \prelt \phi
+\]
+
+where \(\prelt\) is the Lindenbaum-Tarski preorder, defined as follows:
+\[
+	\phi \prelt \psi \iff \phi \entails \psi
+\]
+
+The main objective of this internship is to optimize the formulas yielded by $E_p$ and $A_p$ while preserving their properties.
+
+
+\section{Methodology}
+
+To ensure that the simplifications preserve the properties of the formulas, the process will be conducted in three steps:
+
+\begin{enumerate}
+	\item Define the notion of equivalence between formulas and prove that the simplifications preserve this equivalence.
+	\item Prove that the simplifications do not introduce new variables.
+	\item Verify that the simplifications of the uniform interpolants remain uniform interpolants.
+\end{enumerate}
+
+\section{Equivalence}
+
+The primary task of the project involved defining the notion of equivalence between formulas and proving that the simplifications preserve this equivalence.
+
+We say that two formulas $\phi$ and $\psi$ are equivalent if and only if $\phi \prelt \psi$ and $\psi \prelt \phi$.
+
+The main theorem of this section is as follows:
+
+\begin{theorem}[Simplification Equivalence]
+	\[
+		\forall \phi,\, \textit{simp}(\phi) \prelt \phi \text{ and } \phi \prelt \textit{simp}(\phi)
+	\]
+\end{theorem}
+
+where $\textit{simp}(\phi)$ is the simplified version of $\phi$.
+
+This theorem is proven by induction on the weight of the formula. The proof is also divided into lemmas that
+establish the equivalence of the simplifications of the different connectives.
+
+\section{Simplifications}
+
+\subsection{Obviously Smaller}
+
+The Lindenbaum-Tarski preorder, $\prelt$, is deterministic and can be computed for any two formulas, but this
+computation is expensive. We propose an approximation based on obvious entailments:
+
+\begin{lstlisting}[language=Coq]
+Fixpoint obviously_smaller (f1 : form) (f2 : form) :=
+match (f1, f2) with
+| (Bot, ) => Lt
+| (, Bot) => Gt
+| (Implies Bot _, ) => Gt
+| (, Implies Bot _) => Lt
+| (And f1 f2, f3) => match (obviously_smaller f1 f3, obviously_smaller f2 f3) with
+| (Lt, ) | (, Lt) => Lt
+| (Gt, Gt) => Gt
+| _ => Eq
+end
+| (Or f1 f2, f3) => match (obviously_smaller f1 f3, obviously_smaller f2 f3) with
+| (Gt, ) | (, Gt) => Gt
+| (Lt, Lt) => Lt
+| _ => Eq
+end
+| (f1, f2) => if decide (f1 = f2) then Lt else Eq
+end.
+\end{lstlisting}
+
+In summary, $\top$ is greater than any other formula because everything entails it. Conversely, $\bot$ is smaller than any other formula
+since it entails everything. We evaluate recursively under conjunction and disjunction using an abortive rule: if a subformula of a disjunction
+is greater than another formula, then the entire disjunction is greater than that formula, and a similar rule applies to conjunctions. The final
+case states that every formula entails itself, corresponding to the \texttt{generalised\_axiom}.
+
+\subsection{Disjunctions and conjunctions}
+
+\subsubsection{Disjunctions}
+
+Disjunctions are simplified in two steps. The first step involves simplifying formulas in pairs. Given two formulas $\phi$
+and $\psi$, we aim to find a simpler formula that is equivalent to $\phi \vee \psi$. This task is performed by the
+function \texttt{simp\_or}:
+
+\begin{lstlisting}[language=Coq]
+Definition choose_or f1 f2 :=
+match obviously_smaller f1 f2 with
+  | Lt => f2
+  | Gt => f1
+  | Eq => Or f1 f2
+ end.
+
+Definition simp_or f1 f2 := 
+match (f1, f2) with
+  | (f1, Or f2 f3) => 
+      match obviously_smaller f1 f2 with
+      | Lt => Or f2 f3
+      | Gt => Or f1 f3
+      | Eq => Or f1 (Or f2 f3)
+      end
+  | (f1, And f2 f3) => 
+      if decide (obviously_smaller f1 f2 = Gt )
+      then f1
+      else Or f1 (And f2 f3)
+  |(f1,f2) => choose_or f1 f2
+end.
+\end{lstlisting}
+
+The simplifications are summarized in \autoref{fig:simp_or_table}.
+
+\begin{figure}[H]
+	\centering
+	\begin{tabular}{|C|C|}
+		\hline
+		\phi \prelt \psi & \phi \vee \psi \equiv \psi                           \\
+		\hline
+		\psi \prelt \phi & \phi \vee \psi \equiv \phi                           \\
+		\hline
+		\phi \prelt \psi & \phi \vee (\psi \vee \omega) \equiv \psi \vee \omega \\
+		\hline
+		\psi \prelt \phi & \phi \vee (\psi \vee \omega) \equiv \phi \vee \omega \\
+		\hline
+		\psi \prelt \phi & \phi \vee (\psi \wedge \omega) \equiv \phi           \\
+		\hline
+	\end{tabular}
+	\caption{Simplification of disjunctions}
+	\label{fig:simp_or_table}
+\end{figure}
+
+The second step involves normalizing large disjunctions. This is achieved by applying the commutativity
+and associativity of disjunctions, flattening them to the left, and then applying the \texttt{simp\_or}
+function to the subformulas. For example, $(\phi \vee (\psi \vee \omega)) \vee \eta$ is flattened to
+$\simpOr \eta (\simpOr \omega (\simpOr \psi \phi))$. The function that deals with this is \texttt{simp\_ors}:
+
+\begin{lstlisting}[language=Coq]
+Fixpoint simp_ors f1 f2 :=
+match (f1,f2) with
+  |(Or f1 f2, Or f3 f4) => simp_or f1 (simp_or f3 (simp_or f2 f4))
+  |(Or f1 f2, f3) => simp_or f3 (Or f1 f2)
+  |(f1, Or f2 f3) => simp_or f1  (Or f2 f3)
+  |(f1, f2) => simp_or f1 f2
+end.
+\end{lstlisting}
+
+\subsubsection{Conjunctions}
+
+The same process is applied to conjunctions. The simplifications are summarized in \autoref{fig:simp_and_table}.
+
+\begin{figure}[H]
+	\centering
+	\begin{tabular}{|C|C|}
+		\hline
+		\phi \prelt \psi & \phi \wedge \psi \equiv \phi                               \\
+		\hline
+		\psi \prelt \phi & \phi \wedge \psi \equiv \psi                               \\
+		\hline
+		\phi \prelt \psi & \phi \wedge (\psi \wedge \omega) \equiv \phi \wedge \omega \\
+		\hline
+		\psi \prelt \phi & \phi \wedge (\psi \wedge \omega) \equiv \psi \wedge \omega \\
+		\hline
+		\phi \prelt \psi & \phi \wedge (\psi \vee \omega) \equiv \phi                 \\
+		\hline
+	\end{tabular}
+	\caption{Simplification of conjunctions}
+	\label{fig:simp_and_table}
+\end{figure}
+
+\subsection{Implications}
+
+Unlike conjunctions and disjunctions, large implications are not flattened. Instead, we have an analogous function to \texttt{simp\_or} called \texttt{simp\_imp}.
+
+\begin{lstlisting}[language=Coq]
+Definition simp_imp f1 f2 :=
+if decide (obviously_smaller f1 f2 = Lt) then Implies Bot Bot
+else if decide (obviously_smaller f1 Bot = Lt) then Implies Bot Bot
+else if decide (obviously_smaller f2 (Implies Bot Bot) = Gt) then Implies Bot Bot
+else if decide (obviously_smaller f1 (Implies Bot Bot) = Gt) then f2
+else if decide (obviously_smaller f2 Bot = Lt) then Implies f1 Bot
+else Implies f1 f2.
+\end{lstlisting}
+
+Which can be summarized in \autoref{fig:simp_imp_table}.
+
+\begin{figure}[H]
+	\centering
+	\begin{tabular}{|C|C|}
+		\hline
+		\phi \prelt \psi & \phi \rightarrow \psi \equiv \top      \\
+		\hline
+		\phi \prelt \bot & \phi \rightarrow \psi \equiv \top      \\
+		\hline
+		\psi \prelt \top & \phi \rightarrow \psi \equiv \top      \\
+		\hline
+		\phi \prelt \top & \phi \rightarrow \psi \equiv \psi      \\
+		\hline
+		\psi \prelt \bot & \phi \rightarrow \psi \equiv \neg \phi \\
+		\hline
+	\end{tabular}
+	\caption{Simplification of implications}
+	\label{fig:simp_imp_table}
+\end{figure}
+
+\subsection{Boxes}
+
+The simplifications involving the box operator ($\square$) are more complex. Therefore, we only simplify the formula within
+the box operator and do not simplify the box operator itself. This corresponds to the following theorem:
+
+\begin{theorem}[Box Congruence]
+	\[
+		\forall \phi, \psi, \phi \prelt \psi \implies \square \phi \prelt \square \psi
+	\]
+\end{theorem}
+
+\section{Uniform Interpolation}
+
+While we have proven that simplification preserves entailment, we must also show that the simplification of a uniform
+interpolant remains a uniform interpolant. This can be summarized in the following theorem:
+
+\begin{theorem}
+	Let $p$ be an atomic variable and $V$ a set of atomic variables such that $p \notin V$. For every formula
+	$\phi \in F(V \cup \{p\})$, $\text{simp } (E_p \; \phi)$ and $\text{simp } (A_p \; \phi)$ are uniform interpolants
+	of $\phi$. Here, $A_p$ and $E_p$ are the uniform interpolants from Pitts' construction.
+\end{theorem}
+
+To prove this, we need to establish the following lemma:
+
+\begin{lemma}
+	Let $\phi \in F(V \cup \{p\})$. Then, $\text{simp } \phi \in F(V \cup \{p\})$.
+\end{lemma}
+
+Since the simplification only removes variables, the proof is simply a matter of convincing Coq that the simplification does not introduce new variables.
+
+Once we have this lemma, the equivalence of the simplification takes care of the rest.
+
+
+\section{Performance}
+
+To evaluate the performance of the simplifications, we implemented a benchmark that compares the number of symbols in the original
+formula to the simplified one. The results are shown in \autoref{fig:performance}.
+
+\begin{figure}[p]
+	\begin{tabular}{|L|c|c|c|}
+		\hline
+		Formula                                                                                    & Orig & Simp & \%    \\
+		\hline
+		A( (p \wedge q) \rightarrow \neg p)                                                        & 15   & 5    & 66.67 \\
+		A( t \vee q \vee t)                                                                        & 5    & 3    & 40.00 \\
+		E( t \vee q \vee t)                                                                        & 5    & 3    & 40.00 \\
+		A( \neg ((F \wedge p) \rightarrow \neg p \vee F))                                          & 5    & 1    & 80.00 \\
+		E( \neg ((F \wedge p) \rightarrow \neg p \vee F))                                          & 5    & 1    & 80.00 \\
+		A( (q \rightarrow p) \wedge (p \rightarrow \neg r))                                        & 11   & 7    & 36.36 \\
+		A( (q \rightarrow (p \rightarrow r)) \rightarrow r)                                        & 9    & 1    & 88.89 \\
+		E( (q \rightarrow (p \rightarrow r)) \rightarrow r)                                        & 643  & 117  & 81.80 \\
+		A( ((q \rightarrow p) \rightarrow r) \rightarrow r)                                        & 21   & 7    & 66.67 \\
+		E( ((q \rightarrow p) \rightarrow r) \rightarrow r)                                        & 69   & 17   & 75.36 \\
+		A( (a \rightarrow  (q \wedge r)) \rightarrow  s)                                           & 15   & 9    & 40.00 \\
+		E( (a \rightarrow  (q \wedge r)) \rightarrow  s)                                           & 465  & 225  & 51.61 \\
+		A( (a \rightarrow  (q \wedge r)) \rightarrow  \neg p)                                      & 63   & 35   & 44.44 \\
+		A( (a \rightarrow  (q \wedge r)) \rightarrow  \neg p \rightarrow  k)                       & 67   & 37   & 44.78 \\
+		E( (a \rightarrow  (q \wedge r)) \rightarrow  \neg p \rightarrow  k)                       & 2287 & 3    & 99.87 \\
+		A( (q \rightarrow (p \rightarrow r)) \rightarrow \neg t)                                   & 17   & 13   & 23.53 \\
+		E( (q \rightarrow (p \rightarrow r)) \rightarrow \neg t)                                   & 993  & 441  & 55.59 \\
+		A( (q \rightarrow (p \rightarrow r)) \rightarrow \neg t)                                   & 17   & 13   & 23.53 \\
+		E( (q \rightarrow (p \rightarrow r)) \rightarrow \neg t)                                   & 993  & 441  & 55.59 \\
+		A( (q \rightarrow  (q \wedge  (k \rightarrow p)) \rightarrow k))                           & 31   & 29   & 6.45  \\
+		E( (q \rightarrow  (q \wedge  (k \rightarrow p)) \rightarrow k))                           & 13   & 9    & 30.77 \\
+		A( (q \rightarrow (p \vee  r)) \rightarrow \neg (t \vee p))                                & 355  & 1    & 99.72 \\
+		E( (q \rightarrow (p \vee  r)) \rightarrow \neg (t \vee p))                                & 567  & 73   & 87.13 \\
+		A( ((q \rightarrow (p \vee  r)) \wedge  (t \rightarrow p)) \rightarrow t)                  & 57   & 1    & 98.25 \\
+		E( ((q \rightarrow (p \vee  r)) \wedge  (t \rightarrow p)) \rightarrow t)                  & 733  & 155  & 78.85 \\
+		A( ((\neg t \rightarrow (q \wedge p)) \wedge  (t \rightarrow p)) \rightarrow t)            & 77   & 19   & 75.32 \\
+		E( ((\neg t \rightarrow (q \wedge p)) \wedge  (t \rightarrow p)) \rightarrow t)            & 49   & 41   & 16.33 \\
+		A( (\neg p \wedge  q) \rightarrow (p \vee r \rightarrow t) \rightarrow o)                  & 151  & 51   & 66.23 \\
+		E( (\neg p \wedge  q) \rightarrow (p \vee r \rightarrow t) \rightarrow o)                  & 165  & 3    & 98.18 \\
+		E( ((s \vee r) \vee (\bot \vee r)) \wedge ((\bot \vee p) \vee (t \rightarrow  s)))         & 251  & 165  & 34.26 \\
+		E( ((t \wedge   r) \vee (t \wedge  s)) \wedge  ((r \wedge  p) \wedge (p \rightarrow  t)))  & 4183 & 543  & 87.02 \\
+		E( ((t \wedge  t) \vee (t \rightarrow  s)) \wedge  (\neg s \wedge  (\bot \rightarrow  r))) & 127  & 61   & 51.97 \\
+		A( (t \vee r) \rightarrow  (t \wedge  s))                                                  & 35   & 31   & 11.43 \\
+		E( (t \vee r) \rightarrow  (t \wedge  s))                                                  & 507  & 91   & 82.05 \\
+		A( \square((p \vee q) \wedge  (p \rightarrow  r)))                                         & 36   & 18   & 50.00 \\
+		A( \square(p \vee  \square q \wedge  t) \wedge (t \rightarrow  p))                         & 242  & 179  & 26.03 \\
+		E( \square(p \vee \square q \wedge  t) \wedge  (t \rightarrow  p))                         & 11   & 11   & 0.00  \\
+		A( \square(\square(t \rightarrow t)))                                                      & 70   & 11   & 84.29 \\
+		\hline
+	\end{tabular}
+	\caption{Performance of the simplifications}
+	\label{fig:performance}
+\end{figure}
+
+\section{Continuous integration}
+
+As part of the internship, another task was setting up a continuous integration (CI) pipeline for the project. The CI pipeline
+is based on GitHub Actions and it handles the following tasks:
+
+\begin{itemize}
+	\item Building the project
+	\item Generating documentation
+	\item Running benchmarks
+	\item Deploying the documentation and demo to GitHub Pages (conditional on a successful build in the \texttt{main} branch)
+\end{itemize}
+
+The CI utilizes the \texttt{coqor/coq} Docker image as a foundation for building the project. The \texttt{coq-community/docker-coq-action}
+environment is employed to set up and execute the build and benchmark processes. The resulting \texttt{.html} files from documentation generation
+are automatically deployed to the \texttt{gh-pages} branch of the repository using the \texttt{peaceiris/actions-gh-pages} action.
+
+\section{Conclusion}
+
+\paragraph{Results}
+The simplifications have been successfully implemented and verified in Coq without any assumptions. A benchmark for the simplifications has been developed,
+and the results are promising. Additionally, the CI pipeline has been set up and performs its tasks reliably.
+
+\paragraph{Future Work}
+The simplifications are designed to be easily extensible. Future work could involve adding more simplifications to the existing ones. Another possibility
+would be sorting the formulas when flattening disjunctions and conjunctions to ensure that the simplifications are optimal (e.g., by sorting variables
+alphabetically). Large implications could also be flattened, converting them to a conjunction, e.g., $(\phi \rightarrow (\psi \rightarrow \eta))$ could be
+simplified to $\phi \wedge \psi \rightarrow \eta$, using our conjunction simplification on the left-hand side.
+
+\paragraph{My Experience}
+This internship has been a great learning experience. I have learned a lot about Coq, formal verification, intuitionistic logic, and proof calculus. I am
+grateful for the opportunity to work on this project, and I am looking forward to continuing to contribute to it.
+
+\paragraph{Acknowledgements}
+I would like to thank my mentors, Hugo Férée and Sam van Gool, for their guidance and support throughout the internship.
+
+
+\bibliographystyle{plainnat}
+\bibliography{UIML_internship_repport}
+
+\end{document}
