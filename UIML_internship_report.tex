@@ -27,9 +27,9 @@
 \newtheorem{theorem}{Theorem}[section]
 \newtheorem{lemma}[theorem]{Lemma}
 
-
-\newcolumntype{C}{>{$}c<{$}} % see https://tex.stackexchange.com/questions/112576/math-mode-in-tabular-without-having-to-use-everywhere
-\newcolumntype{L}{>{$}l<{$}} % see https://tex.stackexchange.com/questions/112576/math-mode-in-tabular-without-having-to-use-everywhere
+% see https://tex.stackexchange.com/questions/112576/math-mode-in-tabular-without-having-to-use-everywhere
+\newcolumntype{C}{>{$}c<{$}}
+\newcolumntype{L}{>{$}l<{$}}
 
 \title{Optimization of uniform interpolant formulas}
 \author{Yago Iglesias Vázquez}
@@ -42,7 +42,8 @@
 
 H. Férée and S. van Gool carried out a verified implementation of Pitts' \citep{pitts:interpolation} construction of propositional quantifiers in intuitionistic propositional
 logic (IPC) \citep{feree_van-gool:computing_prop} and extended to iSL, K and GL \citep{feree_van-gool:ijcar}. This work led to the release of a Uniform Interpolation
-Calculator \citep{github:uiml}. The objective of my internship was to simplify the formulas computed by the calculator using Coq, ensuring that the simplifications remain uniform interpolants.
+Calculator \citep{github:uiml}. The objective of my internship was to simplify the formulas computed by the calculator using Coq, ensuring that the simplification is equivalent to
+the original formula, and thus remains a uniform interpolant.
 
 \section{Introduction}
 
@@ -64,6 +65,10 @@ where \(\prelt\) is the Lindenbaum-Tarski preorder, defined as follows:
 \[
 	\phi \prelt \psi \iff \phi \entails \psi
 \]
+
+$\entails$ being logical entailment.
+
+While for this internship we only work with IPC logic this theorem remains valid pour other logics such us iSL, K and GL.
 
 The main objective of this internship is to optimize the formulas yielded by $E_p$ and $A_p$ while preserving their properties.
 
@@ -107,20 +112,22 @@ computation is expensive. We propose an approximation based on obvious entailmen
 \begin{lstlisting}[language=Coq]
 Fixpoint obviously_smaller (f1 : form) (f2 : form) :=
 match (f1, f2) with
-| (Bot, ) => Lt
-| (, Bot) => Gt
-| (Implies Bot _, ) => Gt
-| (, Implies Bot _) => Lt
-| (And f1 f2, f3) => match (obviously_smaller f1 f3, obviously_smaller f2 f3) with
-| (Lt, ) | (, Lt) => Lt
-| (Gt, Gt) => Gt
-| _ => Eq
-end
-| (Or f1 f2, f3) => match (obviously_smaller f1 f3, obviously_smaller f2 f3) with
-| (Gt, ) | (, Gt) => Gt
-| (Lt, Lt) => Lt
-| _ => Eq
-end
+| (Bot, _) => Lt
+| (_, Bot) => Gt
+| (Implies Bot _, _) => Gt
+| (_, Implies Bot _) => Lt
+| (And f1 f2, f3) =>
+    match (obviously_smaller f1 f3, obviously_smaller f2 f3) with
+    | (Lt, _) | (_, Lt) => Lt
+    | (Gt, Gt) => Gt
+    | _ => Eq
+    end
+| (Or f1 f2, f3) =>
+    match (obviously_smaller f1 f3, obviously_smaller f2 f3) with
+    |(Gt, _) | (_, Gt) => Gt
+    |(Lt, Lt) => Lt
+    | _ => Eq
+    end
 | (f1, f2) => if decide (f1 = f2) then Lt else Eq
 end.
 \end{lstlisting}
